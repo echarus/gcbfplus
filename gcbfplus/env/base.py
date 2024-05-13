@@ -215,7 +215,10 @@ class MultiAgentEnv(ABC):
             graph0 = jax2np(graph0)
 
             for kk in tqdm.trange(rollout_length, ncols=80):
-                graph, output = jit_body(graph, None)
+                print(kk)  # BA to test if it prints
+                
+                #graph, output = jit_body(graph, None)
+                graph, output = body(graph, None)
 
                 is_unsafes.append(is_unsafe_fn(graph))
                 is_finishes.append(is_finish_fn(graph))

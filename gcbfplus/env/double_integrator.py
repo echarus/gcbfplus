@@ -64,6 +64,18 @@ class DoubleIntegrator(MultiAgentEnv):
         self._K = jnp.array(lqr(self._A, self._B, self._Q, self._R))
         self.create_obstacles = jax_vmap(Rectangle.create)
 
+        # Get the offline BlueSky data and main drone positions (start and destination) for agent positions and goals
+        # from two external pickle files
+        import pickle
+        with open('external_data/main_drone.pkl', 'rb') as f: 
+            main_drone_bluesky = pickle.load(f)
+        with open('external_data/bluesky_other_drones_reduced_speed_5.pkl', 'rb') as f: 
+            other_drones_bluesky = pickle.load(f)
+        other_drones_keys = list(other_drones_bluesky.keys())
+        self.main_drone_bluesky = main_drone_bluesky
+        self.other_drones_bluesky = other_drones_bluesky
+        self.other_drones_keys = other_drones_keys
+
     @property
     def state_dim(self) -> int:
         return 4  # x, y, vx, vy
@@ -99,9 +111,21 @@ class DoubleIntegrator(MultiAgentEnv):
         obs_theta = jr.uniform(theta_key, (n_rng_obs,), minval=0, maxval=2 * np.pi)
         obstacles = self.create_obstacles(obs_pos, obs_len[:, 0], obs_len[:, 1], obs_theta)
 
-        # randomly generate agent and goal
-        states, goals = get_node_goal_rng(
-            key, self.area_size, 2, obstacles, self.num_agents, 4 * self.params["car_radius"], self.max_travel)
+        # Initialize states and goals for the 11 agent (one main drone and 10 BlueSky)
+        states = np.zeros((self.num_agents, 2))
+        goals = np.zeros((self.num_agents, 2))
+
+        # Insert BlueSky values for the 11 drones, the first one main drone, the remaining from BlueSky
+        # These values come from the external pickle files that are read in the initialization
+        # [x, y, vx, vy]     
+        for ii in range(self.num_agents):
+            if ii == 0: # Main drone
+                states[ii, :2] = np.array(self.main_drone_bluesky[0][4:6])
+                goals[ii, :2] = np.array(self.main_drone_bluesky[1][4:6])
+            else:
+                states[ii, :2] = np.array(self.other_drones_bluesky[self.other_drones_keys[ii-1]][0,8:10])
+                goals[ii, :2] = np.array(self.other_drones_bluesky[self.other_drones_keys[ii-1]][-1,8:10])
+
 
         # add zero velocity
         states = jnp.concatenate([states, jnp.zeros((self.num_agents, 2))], axis=1)
@@ -157,6 +181,16 @@ class DoubleIntegrator(MultiAgentEnv):
         assert agent_states.shape == (self.num_agents, self.state_dim)
 
         next_agent_states = self.agent_step_euler(agent_states, action)
+
+        # Insert BlueSky values for 10 of the 11 drones, the first one main drone is kept as it is since it is GCBF+ controlled one
+        # [x, y, vx, vy]
+        # The UTM x-y coordinates (column index 8 and 9) and derived speeds from UTM coordinates (column index 10 and 11) from the pickle file are used during the insert    
+        for ii in range(self.num_agents-1):
+            if self._t < self.other_drones_bluesky[self.other_drones_keys[ii]].shape[0]:
+                next_agent_states = next_agent_states.at[ii+1, :].set(self.other_drones_bluesky[self.other_drones_keys[ii]][self._t,8:12])
+            else:
+                next_agent_states = next_agent_states.at[ii+1, :].set(self.other_drones_bluesky[self.other_drones_keys[ii]][self.other_drones_bluesky[self.other_drones_keys[ii]].shape[0]-1,8:12])
+
 
         # the episode ends when reaching max_episode_steps
         done = jnp.array(False)

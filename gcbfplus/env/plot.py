@@ -405,7 +405,7 @@ def render_video(
 
         return [agent_col, edge_col, *agent_labels, cost_text, *safe_text, *cnt_col_t, kk_text]
 
-    fps = 30.0
+    fps = 30.0 #30
     spf = 1 / fps
     mspf = 1_000 * spf
     anim_T = len(T_graph.n_node)
